@@ -9,7 +9,7 @@
   ((name :accessor room-name)
     (description :accessor room-description)
     (items :accessor room-items :initform '())
-    (attributes :accessor room-attributes :initform '())
+    (attributes :accessor room-requirements :initform '())
     (exits :accessor room-exits :initform '())))
 
 (defclass item ()
@@ -19,13 +19,13 @@
 
 (defclass action ()
   ((name :accessor action-name)
-    (parameters :accessor action-parameters :initform '()) 
-    (body :accessor action-body)
+    (description :accessor action-description)
+    (requirements :accessor action-requirements :initform '())W
     (property :accessor action-property)))
 
 
 (defclass player ()
-  ((location :accessor player-location)
+  ((location :initarg nil :accessor player-location)
    (inventory :initarg :inventory :accessor player-inventory :initform '())))
 
 (defparameter *player* (make-instance 'player))
@@ -36,7 +36,7 @@
       (setf (room-name rooms-inst) ,name)
       (setf (room-description rooms-inst) ,description)
       (unless (string= ,special_attributes "None")
-        (setf (room-attributes rooms-inst) ,special_attributes))
+        (setf (room-requirements rooms-inst) ,special_attributes))
      (push rooms-inst *rooms*)
      rooms-inst))
 
@@ -49,12 +49,12 @@
      (push item-inst *items*)
      item-inst))
 
-(defmacro defaction (&key name description property)
+(defmacro defaction (&key name description requirements property)
   `(let ((action-inst (make-instance 'action)))
       (setf (action-name action-inst) ,name)
-      (setf (action-body action-inst) ,description)
-      (unless (string= ,property "None")
-        (setf (action-property action-inst) ,property))
+      (setf (action-description action-inst) ,description)
+      (setf (action-requirements action-inst) ,requirements)
+      (setf (action-property action-inst) ,property)
      (push action-inst *actions*)
      action-inst))
 
@@ -87,15 +87,15 @@
 
 (defun can-enter-room-p (target-room)
   "Check if player is allowed to move from CURRENT to TARGET."
-  (let ((required-attr (room-attributes target-room)))
+  (let ((required-attr (room-requirements target-room)))
     (format t "Required attribute to enter ~a: ~a~%" (room-name target-room) required-attr)
     (if (or (null required-attr)
             (string= required-attr "None"))
         t
         ;; target requires an item with this property
-        (player-has-property-p required-attr))))
+        (format t "You have not met all requirements to enter the room.~%"))))
 
-;;Player functions
+;;Gameplay functions
 
 (defun go-to-room (index)
   "Move the player through exit number INDEX (1-based), respecting locks."
@@ -117,7 +117,8 @@
                   (progn
                     (setf (player-location *player*) target-room)
                     (look-around))
-                  (format t "The way is blocked. You need a special item to proceed.~%")))))))
+                  (format t "The way is blocked. You need a special item to proceed.~%"))))))
+  "What do you want to do next?")
 
 (defun look-around ()
   "Describe the current room, its exits, and any items present."
@@ -161,8 +162,47 @@
 (defun inventory ()
   (if (null (player-inventory *player*))
       (format t "You are carrying nothing.~%")
-      (format t "You are carrying: ~{~a~^, ~}~%"
-              (mapcar #'item-name (player-inventory *player*)))))
+      (progn
+        (format t "You are carrying:~%")
+        (dolist (it (player-inventory *player*))
+          (format t " - ~a: ~a~%Properties: ~a~%" (item-name it) (item-description it)(item-properties it))))))
+
+(defun do-action (action-name target-room-index)
+  "Perform an action by name if the player has the required property and remove property from room."
+  (let ((action (find action-name *actions* :test #'string= :key #'action-name)))
+    (if (null action)
+        (format t "There is no such action: ~a.~%" action-name)
+        (let ((required-prop (action-requirements action)))
+          (if (equal (room-name (player-location *player*)) (room-name *goal-room*))
+            (if (equal action-name "Strike down the evil King")
+              (if (player-has-property-p required-prop)
+                (end-fight t)
+                (end-fight nil))
+              (format t "You cannot perform this action here. You must fight the evil King!~%"))
+            (if (or (null required-prop)
+                  (string= required-prop "None")
+                  (player-has-property-p required-prop))
+              (progn
+                (format t "~a~%" (action-description action))
+                ;;If player can correctly perform action, remove property from room requirements
+                (let* ((exits (room-exits (player-location *player*)))
+                  (target-room (nth (1- target-room-index) exits)))
+                  (when target-room
+                    (let ((room-obj (find-room-by-name target-room)))
+                      (when room-obj
+                        (setf (room-requirements room-obj) "None")
+                        (format t "You have successfully performed the action and can now enter ~a.~%" (room-name room-obj)))))))
+              (format t "You cannot perform this action. You lack the required item with the property: ~a.~%" required-prop)))))))
+
+(defun show-actions ()
+  "List all available actions."
+  (if (null *actions*)
+      (format t "There are no actions defined.~%")
+      (progn
+        (format t "Available actions:~%")
+        (dolist (act *actions*)
+          (format t " - ~a: ~a~%Requirements: ~a~%" (action-name act) (action-description act) (action-requirements act))))))
+
 
 ;;World initialization functions
 (defun distribute-items-randomly ()
@@ -238,17 +278,19 @@ Exits are stored as STRINGS (room names)."
 
   (defroom :name "Entrance Hall" :description "The entrance to the evil Kings Castle." :special_attributes "None")
   (defroom :name "Throne Entrance" :description "You have nearly reached your Goal. Only one locked door is standing in your way. Inside an angry King awaits so it might be a good Idea to bring a weapon" :special_attributes "None")
-  (defitem :name "Golden Key" :description "Golden Key with diamonds on it. Used to open a big door." :properties "locked_throne")
-  (defitem :name "Excalibur" :description "A legendary sword used to topple evil Kings" :properties "attack")
+  (defitem :name "Golden Key" :description "Golden Key with diamonds on it. Used to open a big door." :properties "golden_unlock")
+  (defitem :name "Excalibur" :description "A legendary sword used to topple evil Kings" :properties "strike")
 
   ;; 2) Generate a roguelike dungeon structure
   (generate-dungeon)
+  (remove-duplicate-exits)
 
   ;; 3) Distribute items randomly into rooms
   (distribute-items-randomly)
 
   (defroom :name "Throne Room" :description "The evil Kings Throne, an angry King awaits you here to defend his Kingdom!" :special_attributes "locked_throne")
-  (defaction :name "Strike down the evil King" :description "Use your might to defeat the evil King and claim his Throne!" :property "attack")
+  (defaction :name "Unlock Throne Room" :description "Use the Golden Key to unlock the door to the Throne Room." :requirements "golden_unlock" :property "locked_throne")
+  (defaction :name "Strike down the evil King" :description "Use your might to defeat the evil King and claim his Throne!" :requirements "strike" :property "attack")
 
   ;; 4) Choose start and goal rooms
   (let* ((start-room (find-room-by-name "Entrance Hall"))
@@ -283,15 +325,14 @@ Exits are stored as STRINGS (room names)."
 (defun check-goal()
   "Check if the player has reached the goal room."
   (if (eq (player-location *player*) *goal-room*)
-    (progn (format t "~%Congratulations! You have reached the goal room: ~a.~%" (room-name *goal-room*))
-    (end-fight))
+    (format t "~%Congratulations! You have reached the goal room: ~a.~% Are you read to fight the evil King?" (room-name *goal-room*))
     2))
 
-(defun end-fight()
-  (format t "~%As you enter the room, the evil King glares at you with fury.~%")
-  (if (player-has-property-p "attack")
+(defun end-fight (successful)
+  (format t "~%As you prepare to fight him, the evil King glares at you with fury.~%")
+  (if successful
       (format t "With your mighty weapon, you strike down the evil King!~%You have defeated him and claimed the throne! Congratulations, you win!~%")
-      (format t "Unarmed and defenseless, you fall to the evil King's wrath.~%You have been defeated. Game over.~%")))
+      (format t "After a valiant struggle, you fall to the evil King's wrath. Maybe a legendary weapon could have helped you.~%You have been defeated. Game over.~%")))
 
 (defun connect-throne-rooms ()
   (let ((entrance (find-room-by-name "Throne Entrance"))
@@ -300,3 +341,15 @@ Exits are stored as STRINGS (room names)."
     (when (and entrance throne)
       ;; Add one locked exit
       (push (room-name throne) (room-exits entrance)))))
+
+(defun remove-duplicate-exits ()
+  "Remove duplicate exits from all rooms."
+  (dolist (room *rooms*)
+    (dotimes (i (length (room-exits room)))
+      (let ((exit (nth i (room-exits room))))
+        (if (> (count exit (room-exits room) :test #'string=) 1)
+          (setf (room-exits room)
+                (remove exit (room-exits room)
+                        :test #'string=
+                        :count (1- (count exit (room-exits room)
+                                          :test #'string=)))))))))

@@ -31,12 +31,12 @@
 (defparameter *player* (make-instance 'player))
 
 ;;;Macros
-(defmacro defroom (&key name description special_attributes)
+(defmacro defroom (&key name description requirements)
   `(let ((rooms-inst (make-instance 'rooms)))
       (setf (room-name rooms-inst) ,name)
       (setf (room-description rooms-inst) ,description)
-      (unless (string= ,special_attributes "None")
-        (setf (room-requirements rooms-inst) ,special_attributes))
+      (unless (string= ,requirements "None")
+        (setf (room-requirements rooms-inst) ,requirements))
      (push rooms-inst *rooms*)
      rooms-inst))
 
@@ -44,8 +44,7 @@
   `(let ((item-inst (make-instance 'item)))
       (setf (item-name item-inst) ,name)
       (setf (item-description item-inst) ,description)
-      (unless (string= ,properties "None")
-        (setf (item-properties item-inst) ,properties))
+      (setf (item-properties item-inst) ,properties)
      (push item-inst *items*)
      item-inst))
 
@@ -65,7 +64,6 @@
   "Return a new list that is a random permutation of LIST."
   (let* ((vec (coerce list 'vector))
          (n (length vec)))
-    ;; Fisher–Yates shuffle
     (loop for i from (1- n) downto 1 do
       (rotatef (aref vec i)
                (aref vec (random (1+ i)))))
@@ -94,6 +92,20 @@
         t
         ;; target requires an item with this property
         (format t "You have not met all requirements to enter the room.~%"))))
+
+(defun reachable-unlocked-rooms (start)
+  "Get all rooms reachable from START without entering locked rooms."
+  (let ((visited '())
+        (queue (list start)))
+    (loop while queue do
+      (let ((current (pop queue)))
+        (unless (member current visited)
+          (push current visited)
+          (dolist (exit (room-exits current))
+            (let ((next (find-room-by-name exit)))
+              (when (and next (not (locked-room-p next)))
+                (push next queue)))))))
+    visited))
 
 ;;Gameplay functions
 
@@ -174,7 +186,7 @@
         (format t "There is no such action: ~a.~%" action-name)
         (let ((required-prop (action-requirements action)))
           (if (equal (room-name (player-location *player*)) (room-name *goal-room*))
-            (if (equal action-name "Strike down the evil King")
+            (if (equal action-name "Strike King")
               (if (player-has-property-p required-prop)
                 (end-fight t)
                 (end-fight nil))
@@ -205,11 +217,34 @@
 
 
 ;;World initialization functions
+(defun locked-room-p (room)
+  (let ((req (room-requirements room)))
+    (and req (not (string= req "None")))))
+
 (defun distribute-items-randomly ()
-  "Places every item from *items* into a random room."
+  "Place each item into a random *unlocked* room."
   (dolist (item *items*)
-    (let ((room (nth (random (length *rooms*)) *rooms*)))
+    (let* ((valid-rooms
+            ;; Only rooms with no requirements
+            (remove-if #'locked-room-p *rooms*))
+           (room (nth (random (length valid-rooms)) valid-rooms)))
       (push (item-name item) (room-items room)))))
+
+(defun distribute-items-smart ()
+  "Place items so that required items never spawn behind locked rooms."
+  (let* ((start *start-room*)
+         (safe-rooms (reachable-unlocked-rooms start)))
+
+    (dolist (item *items*)
+      ;; Items with no property can be placed anywhere
+      (let* ((must-be-accessible
+              (not (string= (item-properties item) "None")))
+             (valid-rooms
+              (if must-be-accessible
+                  safe-rooms
+                  *rooms*))
+             (room (nth (random (length valid-rooms)) valid-rooms)))
+        (push (item-name item) (room-items room))))))
 
 (defun connect-rooms (room-a room-b)
   "Create a one-way exit from room-a to room-b.
@@ -276,8 +311,8 @@ Exits are stored as STRINGS (room names)."
     (format t "You must load or create a world first!~%")
     (return-from start-game nil))
 
-  (defroom :name "Entrance Hall" :description "The entrance to the evil Kings Castle." :special_attributes "None")
-  (defroom :name "Throne Entrance" :description "You have nearly reached your Goal. Only one locked door is standing in your way. Inside an angry King awaits so it might be a good Idea to bring a weapon" :special_attributes "None")
+  (defroom :name "Entrance Hall" :description "The entrance to the evil Kings Castle." :requirements "None")
+  (defroom :name "Throne Entrance" :description "You have nearly reached your Goal. Only one locked door is standing in your way. Inside an angry King awaits so it might be a good Idea to bring a weapon" :requirements "None")
   (defitem :name "Golden Key" :description "Golden Key with diamonds on it. Used to open a big door." :properties "golden_unlock")
   (defitem :name "Excalibur" :description "A legendary sword used to topple evil Kings" :properties "strike")
 
@@ -286,11 +321,11 @@ Exits are stored as STRINGS (room names)."
   (remove-duplicate-exits)
 
   ;; 3) Distribute items randomly into rooms
-  (distribute-items-randomly)
+  (distribute-items-smart)
 
-  (defroom :name "Throne Room" :description "The evil Kings Throne, an angry King awaits you here to defend his Kingdom!" :special_attributes "locked_throne")
+  (defroom :name "Throne Room" :description "The evil Kings Throne, an angry King awaits you here to defend his Kingdom!" :requirements "locked_throne")
   (defaction :name "Unlock Throne Room" :description "Use the Golden Key to unlock the door to the Throne Room." :requirements "golden_unlock" :property "locked_throne")
-  (defaction :name "Strike down the evil King" :description "Use your might to defeat the evil King and claim his Throne!" :requirements "strike" :property "attack")
+  (defaction :name "Strike King" :description "Use your might to defeat the evil King and claim his Throne!" :requirements "strike" :property "attack")
 
   ;; 4) Choose start and goal rooms
   (let* ((start-room (find-room-by-name "Entrance Hall"))

@@ -3,6 +3,7 @@
 (defparameter *items* '())
 (defparameter *actions* '())
 (defparameter *goal-room* nil)
+(defparameter *start-room* nil)
 
 ;;;Classes
 (defclass rooms ()
@@ -315,47 +316,47 @@ Exits are stored as STRINGS (room names)."
   (defroom :name "Throne Entrance" :description "You have nearly reached your Goal. Only one locked door is standing in your way. Inside an angry King awaits so it might be a good Idea to bring a weapon" :requirements "None")
   (defitem :name "Golden Key" :description "Golden Key with diamonds on it. Used to open a big door." :properties "golden_unlock")
   (defitem :name "Excalibur" :description "A legendary sword used to topple evil Kings" :properties "strike")
+  (defroom :name "Throne Room" :description "The evil Kings Throne, an angry King awaits you here to defend his Kingdom!" :requirements "locked_throne")
+  (defaction :name "Unlock Throne Room" :description "Use the Golden Key to unlock the door to the Throne Room." :requirements "golden_unlock" :property "locked_throne")
+  (defaction :name "Strike King" :description "Use your might to defeat the evil King and claim his Throne!" :requirements "strike" :property "attack")
+
 
   ;; 2) Generate a roguelike dungeon structure
+  (let* ((start-room (find-room-by-name "Entrance Hall"))
+        (goal-room (find-room-by-name "Throne Room")))
+
+    ;; Save them globally
+    (defparameter *start-room* start-room)
+    (defparameter *goal-room* goal-room))
+
+  
   (generate-dungeon)
   (remove-duplicate-exits)
 
   ;; 3) Distribute items randomly into rooms
   (distribute-items-smart)
 
-  (defroom :name "Throne Room" :description "The evil Kings Throne, an angry King awaits you here to defend his Kingdom!" :requirements "locked_throne")
-  (defaction :name "Unlock Throne Room" :description "Use the Golden Key to unlock the door to the Throne Room." :requirements "golden_unlock" :property "locked_throne")
-  (defaction :name "Strike King" :description "Use your might to defeat the evil King and claim his Throne!" :requirements "strike" :property "attack")
+  ;; 4) Place player in start room
+  (setf (player-location *player*) *start-room*)
 
-  ;; 4) Choose start and goal rooms
-  (let* ((start-room (find-room-by-name "Entrance Hall"))
-        (goal-room (find-room-by-name "Throne Room")))
+  (connect-throne-rooms)
 
-    ;; Save them globally
-    (defparameter *start-room* start-room)
-    (defparameter *goal-room* goal-room)
+  ;; 5) Print story / task
+  (format t "~%==============================~%")
+  (format t "      WELCOME TO THE DUNGEON~%")
+  (format t "==============================~%~%")
 
-    ;; 5) Place player in start room
-    (setf (player-location *player*) start-room)
+  (format t "You awaken in ~a.~%"
+          (room-name *start-room*))
+  (format t "Your goal is to reach the legendary room: ~a.~%"
+          (room-name *goal-room*))
+  (format t "Survive the labyrinth, collect useful items,~%")
+  (format t "and navigate your way to the final chamber.~%~%")
 
-    (connect-throne-rooms)
+  (format t "Good luck, adventurer!~%~%")
 
-    ;; 6) Print story / task
-    (format t "~%==============================~%")
-    (format t "      WELCOME TO THE DUNGEON~%")
-    (format t "==============================~%~%")
-
-    (format t "You awaken in ~a.~%"
-            (room-name start-room))
-    (format t "Your goal is to reach the legendary room: ~a.~%"
-            (room-name goal-room))
-    (format t "Survive the labyrinth, collect useful items,~%")
-    (format t "and navigate your way to the final chamber.~%~%")
-
-    (format t "Good luck, adventurer!~%~%")
-
-    ;; 7) Show current room
-    (look-around)))
+  ;; 6) Show current room
+  (look-around))
 
 (defun check-goal()
   "Check if the player has reached the goal room."
